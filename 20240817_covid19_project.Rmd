@@ -201,6 +201,7 @@ new_cases_state %>%
 ### Discussion
 Florida appears to have failed to report Covid-related deaths consistently beginning in the first half of 2021, whereas New York appears to have reported relatively consistently throughout the period under study. Both states show general fluctuations, but as you will see below, New York's were far more pronounced. 
 
+
 This section graphs New York and Florida together in geom_smooth renderings. It also shows a bar graph with deaths per thousand residents, which show that the states, over the course of the entire reporting period, experienced similar casualties rates. Underreporting from Florida, which can be seen in the graph above beginning in the year 2021, likely skewed results from that state.
 ```{r graph_state_totals}
 NYFL_cases <- filter(new_cases_state, Province_State == "New York" | Province_State == "Florida")
@@ -294,3 +295,10 @@ DeSantis, Ron. "Governor Ron DeSantis and Surgeon General Dr. Joe Ladapo Buck CD
 Griffin, Isabel, Jessica King, B. Casey Lyons, Alyson L. Singleton, Xidong Deng, Beau B. Bruce, and Patricia M. Griffin. "Estimates of SARS-CoV-2 Hospitalization and Fatality Rates in the Prevaccination Period, United States." *Emerging Infectious Diseases* 30, no. 6 (June 2024). [https://wwwnc.cdc.gov/eid/article/30/6/23-1285_article#r2](https://wwwnc.cdc.gov/eid/article/30/6/23-1285_article#r2). 
 
 Zaitchik, Benjamin. "Q&A: Covid-19 Transmission Linked to Behavioral Not Meteorological Factors." Coronavirus Resource Center, Johns Hopkins University. 26 March 2021. [https://coronavirus.jhu.edu/tracking/q-n-a/covid-19-transmission-linked-to-behavioral-not-meteorological-factors](https://coronavirus.jhu.edu/tracking/q-n-a/covid-19-transmission-linked-to-behavioral-not-meteorological-factors). 
+
+
+### Session Information
+The final section records my session information.
+```{r session_info}
+sessionInfo()
+```

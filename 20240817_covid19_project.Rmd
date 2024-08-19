@@ -1,0 +1,296 @@
+---
+title: "New York vs. Florida, Covid-19 Edition"
+author: "Phillip"
+date: "2024-08-19"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+library(tidyverse)
+```
+
+### Abstract
+This project explores patterns and divergences between Covid-19 cases and deaths in New York and Florida--two states with similar populations, but drastically different politics and climate. It notes that New York had notable winter waves whereas Florida had consistently high cases, especially after state politicians began to restrict the ability for businesses to require masks. Underreporting in both states makes it difficult to make definitive conclusions regarding Covid policy, but by and large New York appears to have done more to lower the case load. 
+
+
+## Introduction
+Covid-19 has left an indelible mark on our world, buts its various impacts are quickly fading from popular discourse as political exigencies dominate news cycles. This paper, which explores publicly available data collected by the Coronavirus Resource Center of Johns Hopkins University, and made available through CSSEGI and github.com, tracks how the end of mask mandates in New York and Florida impacted the spread of Covid in those states. It also narrows in on a specific moment in Florida when Governor Ron DeSantis banned mask mandates by private entities.
+
+Covid-19 cases in New York state fluctuated with the seasons, whereas cases in Florida remained consistently high throughout the pandemic, but spiked after DeSantis banned mask mandates by private entities. The fluctuations hint at the dual impact of behavior-changes due to climate and of government policy.
+
+The first section of this paper describes the data, methods, and biases. The next section tidies and wrangles the data. The paper then proceeds to the analyze and visualize the data in three subsections. The first compares cases in Florida and New York. The second narrows in on Florida after DeSantis's February 2022 instructions to limit mask wearing. The final section attempts to model Florida cases based on New York cases. The paper concludes with a brief analysis and works cited.
+
+
+## Methods and Data
+The following section imports and tidies the data from CSSEGI. The Coronavirus Resource Center at Johns Hopkins University collected data from earliest reports of transmission to 10 March 2023. In addition to collecting the data, scholars at Johns Hopkins created numerous visualizations and made policy- and behavior-related recommendations for people to follow. (Zaitchik, 2021)
+
+The data itself contains location information, dates, and case counts. Deaths and cases are organized in separate data sets, and US and global cases are organized in separate data sets. However, this project joins the data sets together and adds population information for global cases to allow for further explorations.
+
+
+## Biases and Positionality
+Potential shortcomings of the data involve underreporting, which was especially acute in the early phase of the pandemic, when testing kits were not widely available, and in the latter stages of the pandemic, when many states and counties in the United States stopped reporting due to political or financial reasons. Some scholars have attempted to extrapolate hospitalization and fatalities during these periods, but the data set used in this study only reflects reported cases from CSSEGI. (Griffin, et al., 2024)
+
+Many states appear to have stopped reporting in 2022 and 2023, which skews the results for those periods. Many datasets have zero reported deaths and cases, for instance. Florida, especially, appears to have limited reporting in 2022 just as they severely restricted the ability of companies to require employees to wear masks. This makes it hard to trace trends in this period. 
+
+The author has no conflicts to report. 
+
+
+## Data Wrangling
+This code chunk reads in the data into four variables, US_cases, global_cases, US_deaths, and global_deaths.
+```{r get_data}
+url_in <- "https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/"
+file_names <- c("time_series_covid19_confirmed_US.csv", "time_series_covid19_confirmed_global.csv", "time_series_covid19_deaths_US.csv", "time_series_covid19_deaths_global.csv")
+urls <- str_c(url_in,file_names)
+
+US_cases <- read_csv(urls[1])
+global_cases <- read_csv(urls[2])
+US_deaths <- read_csv(urls[3])
+global_deaths <- read_csv(urls[4])
+```
+
+This section tidies the global data by using pivot_longer to combine each daily entry into columns. 
+```{r tidy_global_data}
+global_cases <- global_cases %>%
+  pivot_longer(cols= -c(`Province/State`,`Country/Region`, Lat, Long),
+               names_to = "date",
+               values_to = "cases") %>%
+  select(-c(Lat,Long))
+
+global_deaths <- global_deaths %>%
+  pivot_longer(cols = -c(`Province/State`,`Country/Region`, Lat, Long),
+               names_to = "date",
+               values_to = "deaths") %>%
+  select(-c(Lat,Long))
+```
+
+This code chunk continues to tidy global data by joining global cases with global deaths and filtering out cases equal to zero, or instances of zero cases. Note that this data set is not visualized in this study, but it is kept here because it was part of the assignment.
+```{r combine_global_data}
+global <- global_cases %>%
+  full_join(global_deaths) %>%
+  rename(Country_Region = `Country/Region`,
+         Province_State = `Province/State`) %>%
+  mutate(date = mdy(date))
+global <- global %>% filter(cases > 0)
+
+global <- global %>%
+  unite("Combined_Key",
+        c(Province_State, Country_Region),
+        sep = ", ",
+        na.rm = TRUE,
+        remove = FALSE)
+```
+
+The US cases section contains population information, but the global data does not. This section adds population information by importing the relevant data.
+```{r global_population}
+uid_lookup_url <- "https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+uid <- read_csv(uid_lookup_url) %>%
+  select(-c(Lat, Long_, Combined_Key, code3, iso2, iso3, Admin2))
+
+global <- global %>%
+  left_join(uid, by = c("Province_State", "Country_Region")) %>%
+  select(-c(UID,FIPS)) %>%
+  select(Province_State, Country_Region, date, cases,
+         deaths, Population, Combined_Key)
+```
+
+This section, like the two sections above, tidies the US data by using pivot_longer to combine each daily entry into columns.
+```{r tidy_US_cases}
+US_cases <- US_cases %>%
+  pivot_longer(cols = -(UID:Combined_Key),
+               names_to = "date",
+               values_to = "cases") %>%
+  select(Admin2:cases) %>%
+  mutate(date=mdy(date)) %>%
+  select(-c(Lat,Long_))
+
+US_deaths <- US_deaths %>%
+  pivot_longer(cols = -(UID:Population),
+               names_to = "date",
+               values_to = "deaths") %>%
+  select(Admin2:deaths) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat,Long_))
+
+US <- US_cases %>%
+  full_join(US_deaths)
+```
+
+This code chunk groups US data by state and creates a new category, death_per_mill, which look at the deaths per million people in a given state or territory.
+```{r summarize_state}
+US_by_state <- US %>%
+  group_by(Province_State, Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths),
+            Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths * 1000000/Population) %>%
+  select(Province_State, Country_Region, date, cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+```
+
+This section recombines individual state data to look at the United States as a whole. 
+```{r summarize_US}
+US_totals <- US_by_state %>%
+  group_by(Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths *1000000/Population) %>%
+  select(Country_Region, date, cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+```
+
+This code chunk calculates new cases by state and in the United States as a whole by subtracting the total cases with lag(cases), or cases from the previous reporting period. It also creates a new category, new_deaths_by_mill, which will be used to compare cases between Florida and New York.
+```{r new_cases}
+new_cases_state <- US_by_state %>%
+  mutate(new_cases = cases - lag(cases),
+         new_deaths = deaths-lag(deaths)) %>% 
+  mutate(new_deaths_by_mill = new_deaths*1000000/Population)
+new_cases_US <- US_totals %>%
+  mutate(new_cases = cases - lag(cases),
+         new_deaths = deaths-lag(deaths))
+```
+
+This code chunk looks at state and territory totals, and cases per thousand and deaths per thousand. It then shows tables of the states and territories with the 10 highest deaths per thousand and 10 fewest deaths per thousand.
+```{r state_totals}
+US_state_totals <- new_cases_state %>% 
+  group_by(Province_State) %>% 
+  summarize(deaths = max(deaths), cases = max(cases),
+            population = max(Population),
+            cases_per_thou = 1000*cases/population,
+            deaths_per_thou = 1000*deaths/population) %>% 
+  filter(cases > 0, population > 0)
+US_state_totals %>% 
+  slice_min(deaths_per_thou, n = 10) %>% 
+  select(Province_State, deaths_per_thou, cases_per_thou, everything())
+US_state_totals %>% 
+  slice_max(deaths_per_thou, n = 10) %>% 
+  select(Province_State, deaths_per_thou, cases_per_thou, everything())
+```
+
+
+## Data Visualization, Part I
+This section explores trends in New York and Florida from earliest reportings up to the period when the Coronavirus Research Center of Johns Hopkins University stopped collecting data on 10 March 2023. The first two graphs display simple (logorithmic) representations of new cases and new deaths in the US states of Florida and New York from 2020-2023. The next two graphs use geom_smooth to trace the general trends in deaths over time in Florida and New York. The first geom looks at the overall deaths, while the second looks at the deaths adjusted for population.
+
+This code chunk plots new cases and deaths in New York
+```{r NY_simple}
+new_cases_state %>% 
+  filter(Province_State == "New York") %>% 
+  ggplot(aes(x=date, y = new_cases)) +
+  geom_point(aes(color="new_cases")) +
+  geom_point(aes(y = new_deaths, color = "new_deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom", 
+        axis.text.x = element_text(angle = 90)) + 
+  labs(title = "COVID19 in New York, 2020-2023", 
+       y = NULL)
+
+```
+
+This code chunk plots new cases and deaths in Florida
+```{r FL_simple}
+new_cases_state %>% 
+  filter(Province_State == "Florida") %>% 
+  ggplot(aes(x=date, y = new_cases)) +
+  geom_point(aes(color="new_cases")) +
+  geom_point(aes(y = new_deaths, color = "new_deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom", 
+        axis.text.x = element_text(angle = 90)) + 
+  labs(title = "COVID19 in florida, 2020-2023", 
+       y = NULL)
+```
+
+### Discussion
+Florida appears to have failed to report Covid-related deaths consistently beginning in the first half of 2021, whereas New York appears to have reported relatively consistently throughout the period under study. Both states show general fluctuations, but as you will see below, New York's were far more pronounced. 
+
+This section graphs New York and Florida together in geom_smooth renderings. It also shows a bar graph with deaths per thousand residents, which show that the states, over the course of the entire reporting period, experienced similar casualties rates. Underreporting from Florida, which can be seen in the graph above beginning in the year 2021, likely skewed results from that state.
+```{r graph_state_totals}
+NYFL_cases <- filter(new_cases_state, Province_State == "New York" | Province_State == "Florida")
+#Florida_cases <- filter(new_cases_state, Province_State == "Florida")
+ggplot(NYFL_cases, aes(x = date, y = new_deaths))+
+  geom_smooth(aes(color=Province_State), se=FALSE) +
+  scale_y_log10()
+ggplot(NYFL_cases, aes(x = date, y = new_deaths_by_mill))+
+  geom_smooth(aes(color=Province_State), se=FALSE) +
+  scale_y_log10()
+
+FL_deaths <- filter(US_state_totals, Province_State == "Florida")$deaths_per_thou
+NY_deaths <- filter(US_state_totals, Province_State == "New York")$deaths_per_thou
+FLNY_deaths_per_thou <- data.frame(
+  state = c("New York", "Florida"),
+  deaths_per_thou = c(NY_deaths, FL_deaths))
+ggplot(FLNY_deaths_per_thou)+
+  geom_bar(aes(x=state, y=deaths_per_thou), stat='identity') +
+  labs(title = "Deaths Per Thousand, NY and FL", x = "State", y = "Deaths Per Thousand")
+```
+
+### Discussion
+New York has distinct ridges that peak in the winter whereas Florida maintained relatively steady throughout. This could be related to weather, though, as Benjamin Zaitchik notes in the FAQs at the Coronavirus Research Center at Johns Hopkins, it is more the behavior of people caused by climate changes as opposed to the weather itself influencing the spread of the Covonavirus. (Zaitchik, 2021) Florida notably did not experience a significant dip in deaths until early 2022, but there was a dramatic rise in the spring of 2022. The section below explores potential policy-related factors that might have led to this.
+
+
+## Data Visualization, Part II
+This section narrows in on 24 February 2022 in Florida when Governor Ron DeSantis announced a new policy that called for limitations on private masking requirements, shorter isolation periods, and the restriction of physicians from using their best judgement to advise patients and companies on Covid. (DeSantis, 2022) The chart below examines Cases in Florida beginning in January 2022 and continuing until January 2023. 
+```{r florida_zoom}
+NYFL_cases %>% 
+  filter(Province_State == "Florida") %>% 
+  filter(year(date) == 2022) %>% 
+  ggplot(aes(x = date, y = new_cases))+
+  geom_point() +
+  scale_y_log10()+
+  geom_smooth()
+```
+
+### Discussion
+After reversing course on mask requirements and isolation policies, Florida appears to have experienced a significant spike in deaths. However, as noted above, Florida also appears to have stopped reporting deaths, which resulted in the growth of the confidence interval. There are many outliers, which suggests inconsistent reporting throughout the pandemic.
+
+
+## Models
+Operating on the assumption that different states experienced similar Covid waves, this section attempts to model Florida cases based on New York cases. However, the scatter plot itself shows little correlation at all, which suggests that the states really did not follow any sort of pattern. 
+
+This code chunk isolates Florida and New York cases then combines them by date for side-by-side comparison and modeling. 
+```{r modeling_data}
+FL_cases <- filter(NYFL_cases, Province_State == "Florida")
+FL_cases <- FL_cases %>% 
+  subset(select = c(date, new_cases, new_deaths)) %>% 
+  rename(
+    Flo_cases = new_cases,
+    Flo_deaths = new_deaths
+  )
+
+NY_cases <- filter(NYFL_cases, Province_State == "New York")
+NY_cases <- NY_cases %>% 
+  subset(select = c(date, new_cases, new_deaths)) %>% 
+  rename(
+    NY_cases = new_cases,
+    NY_deaths = new_deaths
+  )  
+
+NYFL_cases_and_deaths <- FL_cases %>% 
+  full_join(NY_cases) %>% 
+  filter(Flo_cases >= 0) %>% 
+  filter(NY_cases >= 0)
+```
+
+This section attempts to visualize the model, though, as noted above, and as you can see in the graph, cases in NY rarely reflected cases in Florida. 
+```{r model_visualization}
+NYFL_mod <- lm(data = NYFL_cases_and_deaths, NY_cases ~ Flo_cases)
+
+summary(NYFL_mod)
+
+NYFL_cases_and_deaths %>% 
+  mutate (pred=predict(NYFL_mod)) %>% 
+  ggplot() +
+  geom_point(aes(x = NY_cases, y = Flo_cases), color = "red")+
+  geom_smooth(aes(x = NY_cases, y = pred), color = "blue")
+```
+
+## Conclusions
+Perhaps more than anything, this study has shown that inconsistent reporting by different states has made it hard to extrapolate patterns and learn lessons for future pandemics. It is hard to ascribe intent when looking at data, but it is feasible that states underreported to intentionally make it difficult for analyses like this. Florida, and to a lesser degree, New York, consistently underreported deaths and cases beginning in 2021. That said, visualizations from New York show a general trend of winter spikes, whereas Florida retained a consistently high case load throughout the pandemic. If reports are to be trusted, New York and Florida experienced similar deaths per thousand over the course of the pandemic.
+
+Future research likely would require far more modeling and extrapolation of data based on proxy measures, such as total deaths vs. expected deaths in the states, as opposed to official tallies. 
+
+
+## Works Cited
+DeSantis, Ron. "Governor Ron DeSantis and Surgeon General Dr. Joe Ladapo Buck CDC with New Official State Guidance." flgov. 24 February 2024. [https://www.flgov.com/2022/02/24/governor-ron-desantis-and-surgeon-general-dr-joe-ladapo-buck-cdc-with-new-official-state-guidance/](https://www.flgov.com/2022/02/24/governor-ron-desantis-and-surgeon-general-dr-joe-ladapo-buck-cdc-with-new-official-state-guidance/).
+
+Griffin, Isabel, Jessica King, B. Casey Lyons, Alyson L. Singleton, Xidong Deng, Beau B. Bruce, and Patricia M. Griffin. "Estimates of SARS-CoV-2 Hospitalization and Fatality Rates in the Prevaccination Period, United States." *Emerging Infectious Diseases* 30, no. 6 (June 2024). [https://wwwnc.cdc.gov/eid/article/30/6/23-1285_article#r2](https://wwwnc.cdc.gov/eid/article/30/6/23-1285_article#r2). 
+
+Zaitchik, Benjamin. "Q&A: Covid-19 Transmission Linked to Behavioral Not Meteorological Factors." Coronavirus Resource Center, Johns Hopkins University. 26 March 2021. [https://coronavirus.jhu.edu/tracking/q-n-a/covid-19-transmission-linked-to-behavioral-not-meteorological-factors](https://coronavirus.jhu.edu/tracking/q-n-a/covid-19-transmission-linked-to-behavioral-not-meteorological-factors). 

@@ -1,0 +1,230 @@
+---
+title: "NYPD Shooting Project"
+author: "Phillip"
+date: "2024-07-29"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+### Orientation
+This is an exploration of different factors that influenced shootings in New York City from 2010 to 2023. It primarily analyzes the data to explore differences in gender and time of day. I originally planned to incorporate an analysis of the weather and shooter motivation as well, but it proved challenging for a neophyte like myself to find an appropriate data collection to use. Perhaps in the future I can expand this project to explore other factors. 
+
+The first section divides the data into morning shootings and models change over time. The second section divides the data into identified male and female shooters and victims to explore patterns in male and female perpetrators and victims.
+
+Before each code chunk, I include a brief description of what will appear. Apologies for any errors in formatting. This is the first RMarkdown assignment I am submitting.
+
+### Conflicts/Positionality
+I live in New York State, but I have only traveled to the City a few times. I am not a police officer, nor am I personally acquainted with a police officer. I have not been the victim of gun violence, nor do I directly know anyone who has been a victim of gun violence. Politically, I support gun restrictions and strict domestic violence protections.
+
+### Data Bias
+In the second section of my analysis, as I mentioned above, I divide the data into identified male and female shooters. However, we know that both gender and sex appear on spectrums, and the five categories included in the dataset: (null), NA, F, M, and U, do not capture that spectrum. Inconsistency in recording does not allow us to identify third-gender, gender non-conforming, or unknown. I didn't wade into racial categorization, but I imagine there are similar issues when it comes to racial identification, which is also a social construct.
+
+### Data Loading and Wrangling
+In this section, I load the data.
+```{r get_data}
+url_in = "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+```
+
+In this section, I read in the data as a CSV.
+```{r import_data, message = FALSE}
+shooting_data <- read_csv(url_in)
+```
+
+In the following three sections, I tidy the data and select relevant sections for visualizations and modeling. I first convert the date into mdy format, and collapse the PERP_SEX category into Female (F), Male (M), and Unidentified (U) by adding (null) and NA categories to Unidentified. The categorization system does not have a consistent third gender or gender non-conforming category, so I thought it best to collapse these categories for visualization purposes. Then, to tidy the data for different sections, I identify outside_bronx shootings, morning shootings, and shootings conducted by identified female and male victims and perpetrators. 
+```{r tidy_data}
+shooting_data <- mutate(shooting_data, OCCUR_DATE = mdy(OCCUR_DATE))
+shooting_data["PERP_SEX"][is.na(shooting_data["PERP_SEX"])] <- "U"
+shooting_data["PERP_SEX"][shooting_data["PERP_SEX"] == "(null)"] <- "U"
+shooting_data <- shooting_data %>% 
+  mutate(by_year = year(OCCUR_DATE)) %>% 
+  mutate(by_month = month(OCCUR_DATE))
+```
+
+This section isolates shootings that took place in the Bronx.
+```{r outside_bronx}
+outside_bronx = filter(shooting_data, LOC_OF_OCCUR_DESC == "OUTSIDE", BORO == "BRONX")
+```
+
+This section loads morning shooting data. I defined "morning" as 4AM to 11AM. I will only include data from 2010 to 2023.
+```{r morning_shooting}
+morning_shooting <- shooting_data %>% 
+  filter(hour(OCCUR_TIME) >= 4 & hour(OCCUR_TIME) < 11) %>%
+  filter(year(OCCUR_DATE) >= 2010 & year(OCCUR_DATE) <= 2023)
+
+# Calculate the shootings per year that took place between 2010 and 2023 in the morning
+morning_shootings_per_year <- morning_shooting %>% 
+  count(by_year, sort = TRUE) 
+
+# Calculate the shootings per year that took place all day
+shootings_per_year <- shooting_data %>% 
+  filter(year(OCCUR_DATE) >= 2010 & year(OCCUR_DATE) <= 2023) %>% 
+  count(by_year, sort = TRUE)
+
+# Calculate the sums of these two datasets
+sum_morning <- sum(morning_shootings_per_year$n)
+sum_shootings <- sum(shootings_per_year$n)
+
+morning_shootings_per_year <- morning_shootings_per_year %>% 
+  mutate(percentage_total = n*sum_shootings/sum_morning)
+```
+
+### Morning Visuals and Model
+In this section, I comparing morning shootings, defined as having occurred between 4AM and 11AM, as adjusted as a percentage of the total shootings, with the total shootings. There appears to be a correlation, so I then use the shooting totals to predict the morning totals.
+```{r morning_visuals}
+ggplot()+
+  geom_line(mapping = aes(x = by_year, y = percentage_total),
+             color = "blue",
+             data = morning_shootings_per_year) +
+  geom_line(mapping = aes(x = by_year, y = n),
+             color = "red",
+             data = shootings_per_year) +
+  labs(title = "Morning and Total Shootings, 2010 to 2023", x = "Year", y = "Total: Total (red), Morning: Percentage (blue)")
+
+```
+
+Model of predicted morning totals based on shooting totals and actual morning totals.
+```{r morning_model}
+combined <- list(morning_shootings_per_year, shootings_per_year)
+combined <- combined %>% 
+  reduce(full_join, by='by_year')
+  
+names(combined) <- c("year", "morning", "percent_morning", "total")
+
+mod <- lm(morning ~ total, data = combined)
+
+combined_w_pred <- combined %>% 
+  mutate(pred = predict(mod)) 
+
+combined_w_pred %>% ggplot() +
+  geom_point(aes(x = year, y = morning), color = "blue") +
+  geom_point(aes(x = year, y = pred), color = "red") +
+  geom_smooth(aes(x=year, y=morning), se=FALSE) +
+  labs(title = "Morning and Predicted Morning Shootings, 2010 to 2023", x = "Year", y = "Total: Predicted (red), Morning: Percentage (blue)")
+
+```
+
+### Gender of Shooter Wrangling and Visuals
+I defined female shooters as those identified as "F" and male shooters as those identified as "M" in the PERP_SEX category. I will only include data from 2010 to 2023.
+```{r female_shooters}
+female_shooters <- shooting_data %>% 
+  filter(PERP_SEX == "F") %>% 
+  filter(year(OCCUR_DATE) >= 2010) %>% 
+  filter(year(OCCUR_DATE) <= 2023)
+```
+
+```{r male_shooters}
+male_shooters <- shooting_data %>% 
+  filter(PERP_SEX == "M") %>% 
+  filter(year(OCCUR_DATE) >= 2010) %>% 
+  filter(year(OCCUR_DATE) <= 2023)
+```
+
+In this section I calculate the averages of male and female victims for male and female shooters.
+```{r shooter_statistics}
+# This section calculates total female and male victims shot by identified female shooters.
+male_victims_F <- sum(str_detect(female_shooters[["VIC_SEX"]], "M"))
+female_victims_F <- sum(str_detect(female_shooters[["VIC_SEX"]], "F"))
+print(paste("Total female victims shot by females:", female_victims_F))
+print(paste("Total male victims shot by females:", male_victims_F))
+
+# This section calculates total female and male victims shot by identified male shooters.
+male_victims_M <- sum(str_detect(male_shooters[["VIC_SEX"]], "M"))
+female_victims_M <- sum(str_detect(male_shooters[["VIC_SEX"]], "F"))
+print(paste("Total female victims shot by males: ", female_victims_M))
+print(paste("Total male victims shot by males: ", male_victims_M))
+
+# This section calculates the percentage of female victims shot by females and males.
+percentage_victims_F <- 
+  (female_victims_F/(male_victims_F+female_victims_F)) * 100
+percentage_victims_M <- 
+  (female_victims_M/(male_victims_M+female_victims_M)) * 100
+
+print(paste("Percentage of female victims with female shooters", percentage_victims_F))
+print(paste("Percentage of female victims with male shooters", percentage_victims_M))
+```
+
+This section contains various visuals on female and male shooters. The first is a simple plot of the shooting data that tracks the sex of the perpetrator on the x axis and the victim on the y axis. The next graph looks at the percentages of victims of female and male shooters. 
+```{r shooter_visuals}
+# Plot #1: This is a simple plot of the shooting data.
+ggplot(data = shooting_data) +
+  geom_bar(mapping=aes(x = PERP_SEX, fill = VIC_SEX)) +
+  labs(title = "Shooters and Victims by Gender, 2006 to 2023", x = "Sex of the Shooter", y = "Number of Shootings", fill = "Sex of the Victims")
+
+# Plot #2: This plot breaks down the percentages of victims.
+ggplot(data = shooting_data) +
+  geom_bar(mapping=aes(x = PERP_SEX, fill = VIC_SEX), position = "fill") +
+  labs(title = "Percentage of Shootings by Gender, 2006 to 2023", x = "Sex of the Shooter", y = "Number of Shootings", fill = "Sex of the Victims")
+
+# Plot #3: This plot breaks down the race of the victim by month. I did not use this in my presentation or research.
+ggplot(data = shooting_data)+
+  geom_bar(mapping=aes(x=by_month, fill=VIC_RACE))
+
+# Plot #4: This plot traces the percentage fatalities of different shootings based on the sex of the shooter.
+ggplot(data = shooting_data)+
+  geom_bar(mapping=aes(x = PERP_SEX, fill = STATISTICAL_MURDER_FLAG), position = "fill") + 
+    labs(title = "Percentage of Murders by Sex, 2006 to 2023", x = "Sex of Shooter", y = "Percentage Murdered", fill = "Murdered")
+  
+# Plot #5: This plot explores the overall number of fatalities based on the sex of the shooter.
+ggplot(data = shooting_data) +
+  geom_bar(mapping=aes(x = PERP_SEX, fill = STATISTICAL_MURDER_FLAG)) +
+  labs(title = "Murders by Sex, 2006 to 2023", x = "Sex of Shooter", y = "Number of Shootings", fill = "Murdered")
+
+# Plot #6: This plot looks at the location of the shootings when the shooter is female.
+shooting_data %>% 
+  filter(PERP_SEX == "F") %>% 
+  ggplot()+
+  geom_bar(mapping = aes(x=LOC_OF_OCCUR_DESC)) +
+  labs(title = "Location of shootings with female shooters, 2006 to 2023", x = "Location Description", y = "Number of Shootings")
+
+# Plot #7: This plot looks at the sex of the shooter and sex of the victim when the shooting took place in a "PVT HOUSE"
+shooting_data %>% 
+  filter(LOCATION_DESC == "PVT HOUSE") %>% 
+  ggplot()+
+  geom_bar(mapping = aes(x=PERP_SEX, fill = VIC_SEX))+
+  labs(title = "Shootings that took place in a private house, 2006 to 2023", x = "Sex of Shooter", y = "Number of Shootings", fill = "Sex of the Victim")
+  
+#Plot #8: This plot looks at the percentage of shootings based on sex of the shooter when the shooting took place in a private house.
+shooting_data %>% 
+  filter(LOCATION_DESC == "PVT HOUSE") %>%
+  ggplot()+
+  geom_bar(mapping = aes(x=PERP_SEX, fill = VIC_SEX), position="fill")+
+  labs(title = "Percentage of shootings in a private house, 2006 to 2023", x = "Sex of Shooter", y = "Number of Shootings", fill = "Sex of the Victim")
+```
+
+```{r shooter_stats}
+pvt_house <- filter(shooting_data, LOCATION_DESC == "PVT HOUSE")
+#summary(pvt_house)
+sum(str_detect(pvt_house[["VIC_SEX"]], "M"))
+```
+
+
+This section creates a new data frame of female and male shooters and visualizes the percentages of victims using a stacked percentage bar graph. Keep in mind that the number of female shooters was significantly lower than the number of male shooters. The percentage of total victims appears in this visual. I used this in my original research submission, but it is no longer useful after creating the new visualizations above.
+``` {r shooter_visuals_cont}
+perp <- c("Male shooter", "Male shooter", "Female shooter", "Female shooter")
+vict <- c("Male victim", "Female victim", "Male victim", "Female victim")
+perc <- c(100 - percentage_victims_M, percentage_victims_M, 100 - percentage_victims_F, percentage_victims_F)
+
+df <- data.frame(shooter=perp, victim=vict, percentage=perc)
+
+ggplot(df, aes(x=percentage, y=shooter, fill=victim)) +
+  geom_bar(position='stack', stat='identity') +
+  labs(title = "Shooter and victim gender percentages, 2010 to 2023", x = "Percentage", y = "Shooter Gender", fill = "Victim Gender")
+```
+
+### Analysis of Identified Male and Female Shooters and Victims
+The vast majority of shooters were men, and the vast majority of victims, regardless of the gender of the shooter, were men. That said, the percentage of identified female victims was higher, around 18.8%, when the shooter was also identified female. Female victims were identified for 11.6% of male shooters. Incidents involving identified female shooters were also more likely to end in a fatality.
+
+However, when the shootings took place in a household, or "PVT HOUSE" in the LOCATION_DESC, the numbers became inverted. In other words, male shooters were more likely to target female victims when the shootings took place in a private residence than when the shootings took place in other locations, and female shooters were more likely to target male victims when the shootings took place in a private residence. This inversion of the numbers seems to imply that shootings that took place in a household, which might imply that they were domestic affairs, resulted in more people shooting people of the opposite identified sex. This likely implies incidents of domestic violence, or self-defense from domestic violence for heterosexual couples, but this is conjecture. 
+
+Future research might involve exploring databases that include statistics on domestic violence or abuse, or expanding the research to include data on rural shootings or shootings in other metropolitan areas or countries. This is very much a preliminary project, but hopefully future research points to new discoveries.
+
+### Session Information
+The final section records my session information.
+```{r session_info}
+sessionInfo()
+```
+
